@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Analisador de Empréstimo Consignado — simule parcelas, calcule taxa real, saldo devedor e portabilidade com coeficientes oficiais." />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23065f46'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle' fill='%2334d399' font-family='Arial' font-weight='bold'%3E%C2%A3%3C/text%3E%3C/svg%3E" />
+    <title>Analisador de Empréstimo Consignado</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root">
+      <!-- Fallback: se o JavaScript não carregar/montar em 12s, mostra uma
+           mensagem útil em vez de uma página em branco -->
+      <div id="fallback-carregando" style="min-height:100vh;display:grid;place-items:center;background:#0f172a;color:#94a3b8;font-family:Inter,system-ui,sans-serif;padding:24px;text-align:center">
+        <div>
+          <div style="font-size:40px;margin-bottom:12px">💰</div>
+          <div style="font-size:16px;font-weight:700;color:#e2e8f0;margin-bottom:6px">
+            Carregando Analisador de Empréstimo Consignado…
+          </div>
+          <div style="font-size:13px;line-height:1.6">
+            Se esta mensagem continuar visível, clique abaixo ou verifique sua
+            conexão com a internet.
+            <br /><br />
+            <button onclick="location.reload()" style="background:#10b981;color:#052e16;border:none;border-radius:10px;padding:10px 20px;font-weight:800;font-size:14px;cursor:pointer">
+              🔄 Recarregar página
+            </button>
+          </div>
+        </div>
+      </div>
+      <noscript>
+        <div style="min-height:100vh;display:grid;place-items:center;background:#0f172a;color:#f87171;font-family:system-ui,sans-serif;padding:24px;text-align:center">
+          ⚠️ Este aplicativo precisa de JavaScript habilitado para funcionar.
+        </div>
+      </noscript>
+    </div>
+    <script>
+      // Watchdog: quando o React monta, ele substitui o conteúdo de #root
+      // e este indicador é removido automaticamente.
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          if (root) {
+            var fb = document.getElementById('fallback-carregando');
+            if (fb && root.children.length === 1 && root.firstElementChild === fb) {
+              // React não montou: mostra o motivo mais provável
+              var msg = fb.querySelector('div div:last-child');
+              if (msg) {
+                msg.innerHTML =
+                  'Não foi possível iniciar o aplicativo (o script pode ter falhado ao carregar). ' +
+                  'Verifique sua conexão e recarregue.' +
+                  '<br /><br />' +
+                  '<button onclick="location.reload()" style="background:#10b981;color:#052e16;border:none;border-radius:10px;padding:10px 20px;font-weight:800;font-size:14px;cursor:pointer">🔄 Recarregar página</button>';
+              }
+            }
+          }
+        }, 12000);
+      });
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
