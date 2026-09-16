@@ -276,6 +276,7 @@ export default function App() {
   }
   const [ocrMap, setOcrMap] = useState<Record<number, OcrState>>({});
   const ocrProcessando = useRef<Set<number>>(new Set());
+  const ocrAtivoRef = useRef(false);
 
   function updateSlot(key: number, field: keyof FormSlot, value: string) {
     setSlots(prev => prev.map(s => s.key === key ? { ...s, [field]: value } : s));
@@ -317,6 +318,7 @@ export default function App() {
       return;
     }
     ocrProcessando.current.add(slotKey);
+    ocrAtivoRef.current = true;
     // PDF: não gera objectURL para <img> (quebraria); o OCR usa o File direto
     const url = isImage ? URL.createObjectURL(file) : null;
     setOcr(slotKey, { imageUrl: url, fileName: file.name, isPdf, loading: true, progress: 0, dados: null, erro: '', mostrarTexto: false });
@@ -329,6 +331,7 @@ export default function App() {
       setOcr(slotKey, { loading: false, erro: 'Erro ao processar arquivo: ' + (err.message || 'desconhecido') });
     } finally {
       ocrProcessando.current.delete(slotKey);
+      ocrAtivoRef.current = ocrProcessando.current.size > 0;
     }
   }
 
@@ -650,6 +653,9 @@ export default function App() {
   const [adminMsg, setAdminMsg] = useState('');
 
   useEffect(() => {
+    // O login só pode acontecer depois desta limpeza. Mantê-la após um await
+    // permitiria apagar uma sessão criada enquanto a nuvem sincronizava.
+    limparSessao();
     (async () => {
       // 1) Baixa usuários da nuvem (se configurada) antes de garantir o master
       try {
@@ -662,8 +668,6 @@ export default function App() {
 
       // O acesso nao e restaurado automaticamente ao recarregar a pagina.
       // O usuario precisa autenticar novamente pelo botao Entrar.
-      limparSessao();
-
       // 3) Espelha as tabelas de coeficientes da nuvem (adiciona, atualiza
       //    E remove as que não existem mais no banco — evita acúmulo).
       //    Baixa as do escopo GLOBAL + as do usuário logado.
@@ -743,6 +747,9 @@ export default function App() {
 
     const checar = async () => {
       if (!vivo || checando) return;
+      // O OCR pode ocupar a thread principal e atrasar respostas/heartbeats.
+      // Não sincroniza usuários enquanto o arquivo ainda está sendo processado.
+      if (ocrAtivoRef.current) return;
       // Não gasta requisição se o navegador está offline
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       checando = true;
@@ -844,9 +851,10 @@ export default function App() {
 
     // Cria novo token e AGUARDA o banco confirmar antes de liberar a sessão.
     await salvarSessao(u.id);
+    const usuarioComSessao = obterSessaoUsuario() || { ...u, sessaoDispositivo: descreverDispositivo() };
     setUsuarioCoeficientes(u.id);
     setTabelasVersion(v => v + 1);
-    setCurrentUser({ ...u, sessaoDispositivo: descreverDispositivo() });
+    setCurrentUser(usuarioComSessao);
 
     // Workspace desta sessão (não sincroniza entre acessos simultâneos)
     const contratosFinais = lerContratosUsuario(u.id);

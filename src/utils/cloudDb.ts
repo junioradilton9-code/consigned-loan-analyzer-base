@@ -237,8 +237,22 @@ async function protegerSessoesRemotas(lista: Usuario[], sb: SupabaseClient): Pro
 async function upsertUsuarios(lista: Usuario[]): Promise<boolean> {
   const sb = getClient(); if (!sb) return false;
   const ativosOriginais = lista.filter(u => !(u.deletadoEm || (u as any).deletedAt));
-  const ativos = await protegerSessoesRemotas(ativosOriginais, sb);
+  let ativos = await protegerSessoesRemotas(ativosOriginais, sb);
   if (!ativos) return false;
+
+  // Uma gravação iniciada antes do login pode terminar depois de salvarSessao
+  // e sobrescrever o token novo com um snapshot antigo. Reaplica a sessão
+  // local no último instante antes do upsert.
+  const sessaoIdAtual = localStorage.getItem('consig_session_id');
+  const sessaoTokenAtual = localStorage.getItem('consig_session_token');
+  if (sessaoIdAtual && sessaoTokenAtual) {
+    const usuarioAtual = lerUsuarios().find(u => u.id === sessaoIdAtual);
+    if (usuarioAtual && lerSessoesAtivas(usuarioAtual).some(s => s.token === sessaoTokenAtual)) {
+      ativos = ativos.map(u => u.id === sessaoIdAtual
+        ? { ...u, sessaoToken: usuarioAtual.sessaoToken, sessaoDispositivo: usuarioAtual.sessaoDispositivo }
+        : u);
+    }
+  }
   if (!ativos.length) return true;
   try {
     const ids = ativos.map(u => u.id);
@@ -274,12 +288,21 @@ async function upsertUsuarios(lista: Usuario[]): Promise<boolean> {
   }
 }
 
+// As gravações da lista completa precisam ser serializadas. Sem esta fila,
+// uma chamada antiga que demorou na rede pode terminar depois da mais recente.
+let filaUpsertUsuarios: Promise<void> = Promise.resolve();
+
 export async function nuvemSalvarUsuarios(lista: Usuario[]): Promise<boolean> {
-  return upsertUsuarios(lista);
+  const executar = filaUpsertUsuarios.then(
+    () => upsertUsuarios(lista),
+    () => upsertUsuarios(lista),
+  );
+  filaUpsertUsuarios = executar.then(() => undefined, () => undefined);
+  return executar;
 }
 
 export async function nuvemSalvarUsuario(u: Usuario): Promise<boolean> {
-  return upsertUsuarios([u]);
+  return nuvemSalvarUsuarios([u]);
 }
 
 export async function nuvemRemoverUsuario(id: string): Promise<boolean> {

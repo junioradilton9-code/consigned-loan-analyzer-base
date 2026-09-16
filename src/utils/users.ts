@@ -604,20 +604,26 @@ export async function validarSessaoAtiva(): Promise<{ ok: true } | { ok: false; 
       const remotos = await nuvemBaixarUsuarios();
       if (remotos && remotos.length) {
         const locais = lerUsuarios();
-        const mapa = new Map<string, Usuario>();
-        locais.forEach(u => mapa.set(u.id, u));
-        remotos.forEach(u => mapa.set(u.id, u));
-        localStorage.setItem(CHAVE_USERS, JSON.stringify([...mapa.values()]));
-
         const remoto = remotos.find(u => u.id === id);
         if (!remoto) return { ok: false, motivo: 'removido' };
         if (remoto.bloqueado) return { ok: false, motivo: 'bloqueado' };
         if (remoto.dataExpiracao && new Date() > new Date(remoto.dataExpiracao))
           return { ok: false, motivo: 'expirado' };
 
-        const local = obterUsuarioPorId(id) || null;
-        const localOk = !!local && lerSessoesAtivas(local).some(s => s.token === tokenLocal);
+        // Valida antes de substituir o cache local. Uma resposta remota
+        // atrasada/legada sem o token não pode apagar a sessão recém-criada.
+        const local = locais.find(u => u.id === id) || null;
+        const sessoesLocais = local ? lerSessoesAtivas(local) : [];
+        const sessaoLocal = sessoesLocais.find(s => s.token === tokenLocal);
+        const localOk = !!sessaoLocal;
         const sessoesRemotas = lerSessoesAtivas(remoto);
+        const sessaoRemotaMaisRecente = [...sessoesRemotas]
+          .filter(s => !!s.criadoEm)
+          .sort((a, b) => a.criadoEm.localeCompare(b.criadoEm))
+          .at(-1);
+        const remotoSubstituiuSessao = !!sessaoLocal?.criadoEm &&
+          !!sessaoRemotaMaisRecente?.criadoEm &&
+          sessaoRemotaMaisRecente.criadoEm > sessaoLocal.criadoEm;
 
         // Avança quando a sessão ainda existe neste navegador. Isso evita
         // falsos positivos causados por sincronização lenta ou por um banco
@@ -638,15 +644,31 @@ export async function validarSessaoAtiva(): Promise<{ ok: true } | { ok: false; 
             // Damos prioridade à sessão local quando ela ainda está ativa
             // neste navegador, porque o backend pode estar sem a última sessão
             // sincronizada ou a conta foi bloqueada em outra aba do mesmo app.
-            if (localOk) {
-              if (naJanelaDeGraça) return { ok: true };
-              return { ok: true };
+            if (localOk && naJanelaDeGraça) return { ok: true };
+            if (!naJanelaDeGraça && remotoSubstituiuSessao) {
+              return { ok: false, motivo: 'outro_dispositivo' };
             }
-            if (!naJanelaDeGraça) return { ok: false, motivo: 'outro_dispositivo' };
           } else {
             localStorage.removeItem(CHAVE_ULTIMO_LOGIN);
           }
         }
+
+        const mapa = new Map<string, Usuario>();
+        locais.forEach(u => mapa.set(u.id, u));
+        remotos.forEach(u => {
+          // Mantém o token local enquanto a nuvem ainda não publicou a sessão.
+          // Quando há outro token remoto, o retorno acima já encerrou a sessão.
+          if (u.id === id && local && (sessoesRemotas.length === 0 || localOk)) {
+            mapa.set(u.id, {
+              ...u,
+              sessaoToken: local.sessaoToken,
+              sessaoDispositivo: local.sessaoDispositivo,
+            });
+          } else {
+            mapa.set(u.id, u);
+          }
+        });
+        localStorage.setItem(CHAVE_USERS, JSON.stringify([...mapa.values()]));
         return { ok: true };
       }
     }
@@ -662,7 +684,11 @@ export async function validarSessaoAtiva(): Promise<{ ok: true } | { ok: false; 
   if (!localOk) {
     // No mesmo navegador, a sessão local ainda pode existir mesmo quando a nuvem
     // está atrasada. Só consideramos outro dispositivo fora da janela de graça.
-    if (!naJanelaDeGraça) return { ok: false, motivo: 'outro_dispositivo' };
+            // Token diferente sem timestamp confiável pode ser uma resposta
+            // antiga do Supabase; nunca derruba a sessão por esse sinal isolado.
+            if (!naJanelaDeGraça && remotoSubstituiuSessao) {
+              return { ok: false, motivo: 'outro_dispositivo' };
+            }
     return { ok: true };
   }
   return { ok: true };
