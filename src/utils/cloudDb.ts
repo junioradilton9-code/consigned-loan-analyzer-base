@@ -200,13 +200,45 @@ export async function nuvemBaixarUsuarios(): Promise<Usuario[] | null> {
   }
 }
 
+async function protegerSessoesRemotas(lista: Usuario[], sb: SupabaseClient): Promise<Usuario[] | null> {
+  const sessaoId = localStorage.getItem('consig_session_id');
+  const sessaoToken = localStorage.getItem('consig_session_token');
+  const ids = lista.map(u => u.id);
+  if (!ids.length) return lista;
+
+  const { data, error } = await sb
+    .from('usuarios')
+    .select('id, sessao_token, sessao_dispositivo')
+    .in('id', ids);
+  if (error) {
+    // Bancos antigos não possuem essas colunas; nesse caso o fallback básico
+    // continua seguro porque não há sessão remota para preservar.
+    if (/sessao_token|sessao_dispositivo|column/i.test(error.message)) return lista;
+    return null;
+  }
+
+  const remotos = new Map((data || []).map((u: any) => [u.id, u]));
+  return lista.map(u => {
+    const remoto = remotos.get(u.id);
+    const eSessaoAtual = u.id === sessaoId && !!sessaoToken;
+    if (!remoto || eSessaoAtual) return u;
+    return {
+      ...u,
+      sessaoToken: remoto.sessao_token,
+      sessaoDispositivo: remoto.sessao_dispositivo,
+    };
+  });
+}
+
 /**
  * Salva usuários na nuvem. Se o schema for antigo (faltando colunas novas),
  * retenta usando apenas colunas básicas e guarda os extras dentro de permissoes.
  */
 async function upsertUsuarios(lista: Usuario[]): Promise<boolean> {
   const sb = getClient(); if (!sb) return false;
-  const ativos = lista.filter(u => !(u.deletadoEm || (u as any).deletedAt));
+  const ativosOriginais = lista.filter(u => !(u.deletadoEm || (u as any).deletedAt));
+  const ativos = await protegerSessoesRemotas(ativosOriginais, sb);
+  if (!ativos) return false;
   if (!ativos.length) return true;
   try {
     const ids = ativos.map(u => u.id);
@@ -398,8 +430,31 @@ export async function enviarDadosLocaisParaNuvem(): Promise<void> {
 
   try {
     // 1) Usuários
-    const usuarios = lerUsuarios();
-    if (usuarios.length) {
+    let usuarios = lerUsuarios();
+    let podeEnviarUsuarios = true;
+    const sessaoId = localStorage.getItem('consig_session_id');
+    const sessaoToken = localStorage.getItem('consig_session_token');
+
+    // A lista local pode conter um token antigo mesmo sem haver uma sessão
+    // ativa neste navegador. Nunca deixe esse cache substituir a sessão
+    // válida de outro dispositivo durante a sincronização automática.
+    if (!sessaoId || !sessaoToken) {
+      const remotos = await nuvemBaixarUsuarios();
+      if (remotos === null) podeEnviarUsuarios = false;
+      if (remotos?.length) {
+        const porId = new Map(remotos.map(u => [u.id, u]));
+        usuarios = usuarios.map(u => {
+          const remoto = porId.get(u.id);
+          if (!remoto) return u;
+          return {
+            ...u,
+            sessaoToken: remoto.sessaoToken,
+            sessaoDispositivo: remoto.sessaoDispositivo,
+          };
+        });
+      }
+    }
+    if (podeEnviarUsuarios && usuarios.length) {
       await nuvemSalvarUsuarios(usuarios);
     }
 
